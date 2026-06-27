@@ -965,10 +965,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (sel) sel.addEventListener("change", e => cargarMercado(e.target.value));
 
   } else if (pagina.includes("svc")) {
-    // modulo6.3-svc.html — reemplaza cargarTicker()
-    await cargarSVC(tickerActivo());
-    const sel = document.getElementById("ticker-select");
-    if (sel) sel.addEventListener("change", e => cargarSVC(e.target.value));
+    // modulo6.3-svc.html
+    // Este módulo usa su propia función cargarSVCReal (definida
+    // en el HTML), que respeta el contrato real del backend
+    // (modelo binario BUY/SELL, matriz 2x2). No usamos cargarSVC()
+    // de aquí para evitar duplicar la carga y el listener del
+    // selector, y para no depender del fallback a datos_svc.json.
+    if (typeof window.cargarSVCReal === "function") {
+      // La carga inicial ya la dispara el propio HTML en
+      // DOMContentLoaded; aquí solo evitamos doble listener.
+    }
 
   } else if (pagina.includes("lstm")) {
     // modulo6.4-lstm.html
