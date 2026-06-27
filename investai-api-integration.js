@@ -987,10 +987,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   } else if (pagina.includes("core")) {
     // modulo6.6-core-predictivo-central.html
-    await Promise.all([
-      cargarRNNs(tickerActivo()),
-      cargarLSTMRegresor(tickerActivo())
-    ]);
+    // Este módulo usa su propia función (definida en el HTML),
+    // ya que sus IDs (radarChart, table-body) son distintos a
+    // los del módulo 6.4 (rnnsChart, lstm-senal, etc.)
+    if (typeof window.cargarCoreResumen === "function") {
+      await window.cargarCoreResumen();
+    }
   }
 });
 
