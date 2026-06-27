@@ -6,6 +6,7 @@
   <title>InvestAI — Módulos del Sistema</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
   <style>
 /* __INVESTAI_NAV_CSS__ */
@@ -944,6 +945,184 @@
       document.querySelectorAll('.investai-nav-links a').forEach(a => a.classList.remove('active-tab'));
       document.getElementById('nav-m6').classList.add('active-tab');
     }
+
+    // =========================================================
+    // CORE PREDICTIVO — Carga de datos reales desde la API
+    // (radar de accuracy + tabla de historial de inferencias)
+    // =========================================================
+
+    const CORE_TICKERS = ["FSM", "VOLCABC1.LM", "ABX.TO", "BVN", "BHP"];
+    let coreFilasTabla = []; // cache de filas para poder filtrar sin re-pedir a la API
+
+    /**
+     * Punto de entrada: pide /api/rnns/{ticker} para cada uno de los 5
+     * tickers del proyecto, dibuja el radar de accuracy agregado y
+     * construye la tabla de historial con una fila por modelo/ticker.
+     */
+    async function cargarCoreResumen() {
+      const resultados = [];
+
+      for (const ticker of CORE_TICKERS) {
+        try {
+          const data = await apiFetch(`/api/rnns/${ticker}`);
+          resultados.push({ ticker, data });
+        } catch (err) {
+          console.error(`[Core] Error cargando ${ticker}:`, err.message);
+        }
+      }
+
+      if (resultados.length === 0) {
+        const tbody = document.getElementById('table-body');
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--err); padding:24px;">
+            ⚠️ No se pudo conectar con la API. Verifica que el servidor de Colab esté activo.
+          </td></tr>`;
+        }
+        return;
+      }
+
+      _renderRadarCore(resultados);
+      coreFilasTabla = _construirFilasTabla(resultados);
+      _renderTabla(coreFilasTabla);
+    }
+
+    /**
+     * Dibuja el radar de accuracy promedio por arquitectura
+     * (Clasificación / Regresión / NLP / Híbridos), usando el
+     * accuracy promedio de LSTM+BiLSTM+GRU+SimpleRNN como proxy
+     * de "Regresión Temporal" y "Clasificación" respectivamente,
+     * ya que son los únicos datos reales disponibles en el backend.
+     */
+    function _renderRadarCore(resultados) {
+      const modelos = ["lstm", "bilstm", "gru", "simplernn"];
+
+      // Promedio de accuracy de cada arquitectura RNN a través de todos los tickers
+      const promedios = {};
+      modelos.forEach(key => {
+        const valores = resultados
+          .map(r => r.data.modelos?.[key]?.metricas?.accuracy)
+          .filter(v => typeof v === "number");
+        promedios[key] = valores.length
+          ? valores.reduce((a, b) => a + b, 0) / valores.length
+          : 0;
+      });
+
+      const ctxEl = document.getElementById('radarChart');
+      if (!ctxEl) return;
+      if (window._coreRadarChart) window._coreRadarChart.destroy();
+
+      window._coreRadarChart = new Chart(ctxEl, {
+        type: 'radar',
+        data: {
+          labels: ['LSTM', 'BiLSTM', 'GRU', 'SimpleRNN'],
+          datasets: [{
+            label: 'Accuracy promedio (%)',
+            data: modelos.map(k => (promedios[k] * 100).toFixed(1)),
+            backgroundColor: 'rgba(31,56,100,0.15)',
+            borderColor: '#1F3864',
+            pointBackgroundColor: '#C5961A',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            r: {
+              min: 0, max: 100,
+              ticks: { stepSize: 25, color: '#6b7280', backdropColor: 'transparent' },
+              grid: { color: '#e5e9f0' },
+              angleLines: { color: '#e5e9f0' },
+              pointLabels: { font: { size: 11 }, color: '#374151' }
+            }
+          }
+        }
+      });
+    }
+
+    /**
+     * Convierte la respuesta de /api/rnns/{ticker} (4 modelos por ticker)
+     * en filas planas para la tabla: una fila por modelo × ticker.
+     */
+    function _construirFilasTabla(resultados) {
+      const MODELOS = [
+        { key: "lstm",      label: "LSTM" },
+        { key: "bilstm",    label: "BiLSTM" },
+        { key: "gru",       label: "GRU" },
+        { key: "simplernn", label: "SimpleRNN" }
+      ];
+
+      const filas = [];
+      resultados.forEach(({ ticker, data }) => {
+        MODELOS.forEach(({ key, label }) => {
+          const m = data.modelos?.[key];
+          if (!m) return;
+          filas.push({
+            timestamp: data.ultima_actualizacion || '—',
+            ticker,
+            modelo: label,
+            tipo: "Clasificación de tendencia",
+            prediccion: `${m.senal} (${(m.probabilidad_mañana * 100).toFixed(1)}%)`,
+            senal: m.senal,
+            estadoOk: true
+          });
+        });
+      });
+      return filas;
+    }
+
+    /**
+     * Pinta las filas en el <tbody id="table-body">.
+     */
+    function _renderTabla(filas) {
+      const tbody = document.getElementById('table-body');
+      if (!tbody) return;
+
+      if (filas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-3); padding:24px;">Sin resultados.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filas.map(f => `
+        <tr>
+          <td>${f.timestamp}</td>
+          <td><span class="ticker-badge">${f.ticker}</span></td>
+          <td>${f.modelo}</td>
+          <td>${f.tipo}</td>
+          <td style="font-weight:600; color:${
+            f.senal === 'BUY' ? 'var(--ok)' : f.senal === 'SELL' ? 'var(--err)' : 'var(--warn)'
+          }">${f.prediccion}</td>
+          <td>
+            <span class="status-badge ${f.estadoOk ? 'status-ok' : 'status-err'}">
+              ${f.estadoOk ? '● Exitosa' : '● Error'}
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    /**
+     * Filtra las filas ya cargadas por ticker o nombre de modelo,
+     * sin volver a pedir datos a la API.
+     */
+    function filterTable() {
+      const texto = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+      if (!texto) {
+        _renderTabla(coreFilasTabla);
+        return;
+      }
+      const filtradas = coreFilasTabla.filter(f =>
+        f.ticker.toLowerCase().includes(texto) ||
+        f.modelo.toLowerCase().includes(texto)
+      );
+      _renderTabla(filtradas);
+    }
+
+    // Exposición explícita para que investai-api-integration.js
+    // pueda detectarlas y llamarlas de forma confiable.
+    window.cargarCoreResumen = cargarCoreResumen;
+    window.filterTable = filterTable;
   
 /* __INVESTAI_NAV_JS__ */
     (function(){
