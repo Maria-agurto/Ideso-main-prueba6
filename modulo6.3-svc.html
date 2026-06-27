@@ -311,7 +311,7 @@
         <a href="modulo6.1-autenticacion.html" id="nav-m1" data-mod="m1" onclick="navigateModule('m1', event)">Autenticación (M1)</a>
         <a href="modulo6.2-mercado.html" id="nav-m2" data-mod="m2" onclick="navigateModule('m2', event)">Ingesta de Datos (M2)</a>
         <a href="modulo6.3-svc" id="nav-m3" data-mod="m3" onclick="navigateModule('m3', event)" class="active-tab">Predicciones SVC (M3)</a>
-        <a href="modulo6.4-lstm" id="nav-m4" data-mod="m4" onclick="navigateModule('m4', event)">Predicciones SVC (M4)</a>
+        <a href="modulo6.4-lstm" id="nav-m4" data-mod="m4" onclick="navigateModule('m4', event)">Pronósticos LSTM (M4)</a>
         <a href="modulo6.5-nlp-operaciones.html" id="nav-m5" data-mod="m5" onclick="navigateModule('m5', event)">Análisis NLP (M5)</a>
         <a href="modulo6.6-core-predictivo-central.html" id="nav-m6" data-mod="m6" onclick="navigateModule('m6', event)">Core Predictivo (M6)</a>
         <a href="modulo6.7-estrategias.html" id="nav-m7" data-mod="m7" onclick="navigateModule('m7', event)">Estrategias (M7)</a>
@@ -331,7 +331,7 @@
 
   <div class="ticker-wrap">
   <span>Activo:</span>
-  <select id="ticker-select" onchange="cargarSVC(this.value)">
+  <select id="ticker-select" onchange="cargarSVCReal(this.value)">
     <option value="FSM" selected>FSM — Fortuna Silver Mines</option>
     <option value="BVN">BVN — Buenaventura</option>
     <option value="BHP">BHP — BHP Group</option>
@@ -558,20 +558,21 @@ const trianglePlugin = {
       ctx.save();
       ctx.beginPath();
 
-      if (s === 1) {
+      if (s === 1 || s === 'BUY') {
         // BUY → triángulo apuntando arriba
         ctx.fillStyle = 'rgba(63,185,80,0.90)';
         ctx.moveTo(x, y - SIZE - 6);
         ctx.lineTo(x - SIZE, y - 6);
         ctx.lineTo(x + SIZE, y - 6);
-      } else if (s === 2) {
+      } else if (s === 2 || s === 'SELL') {
         // SELL → triángulo apuntando abajo
         ctx.fillStyle = 'rgba(248,81,73,0.90)';
         ctx.moveTo(x, y + SIZE + 6);
         ctx.lineTo(x - SIZE, y + 6);
         ctx.lineTo(x + SIZE, y + 6);
       } else {
-        // HOLD → círculo gris
+        // HOLD → círculo gris (solo aplica a datos simulados; el
+        // modelo SVC real es binario y no usa esta rama)
         ctx.fillStyle = 'rgba(210,153,34,0.75)';
         ctx.arc(x, y, 4, 0, Math.PI * 2);
       }
@@ -745,9 +746,189 @@ function clasColor(c) {
 }
 
 // ═══════════════════════════════════════════════════
-//  INIT
+//  CARGA DE DATOS REALES — API /api/svc/{ticker}
+//  (el modelo SVC real es binario: BUY / SELL, sin HOLD)
 // ═══════════════════════════════════════════════════
-cargarTicker('AAPL');
+
+const NOMBRES_TICKERS = {
+  'FSM': 'Fortuna Silver Mines Inc.',
+  'BVN': 'Compañía de Minas Buenaventura S.A.A.',
+  'BHP': 'BHP Group Limited',
+  'ABX.TO': 'Barrick Gold Corporation',
+  'VOLCABC1.LM': 'Volcan Compañía Minera S.A.A.'
+};
+
+async function cargarSVCReal(ticker) {
+  try {
+    const d = await apiFetch(`/api/svc/${ticker}`);
+    _renderSVCReal(ticker, d);
+  } catch (err) {
+    console.error('[SVC] Error cargando', ticker, ':', err.message);
+    const tabla = document.getElementById('cm-table');
+    if (tabla) {
+      tabla.innerHTML = `<tr><td style="color:var(--sell);padding:16px;font-family:var(--font-mono);font-size:11px;">
+        ⚠️ No se pudo conectar con la API para ${ticker}.<br>${err.message}
+      </td></tr>`;
+    }
+  }
+}
+window.cargarSVCReal = cargarSVCReal;
+
+/**
+ * Pinta todo el dashboard (título, semáforo, gráfico, métricas,
+ * matriz de confusión y barra de distribución) con los datos
+ * reales devueltos por /api/svc/{ticker}.
+ *
+ * Contrato real (ver datos_svc.json / main.py):
+ * { nombre, ticker, senal: "BUY"|"SELL", conf: 0-1,
+ *   fechas: [...], precios: [...], senales: ["BUY","SELL",...],
+ *   metricas: { accuracy, precision, recall, f1 } (0-1),
+ *   matriz: [[a,b],[c,d]] (2x2, orden BUY/SELL),
+ *   clases: { buy: n, sell: n }, kernel: {...} }
+ */
+function _renderSVCReal(ticker, d) {
+  const fechas   = d.fechas   || [];
+  const precios  = d.precios  || [];
+  const senales  = d.senales  || []; // strings: "BUY" | "SELL"
+  const metricas = d.metricas || {};
+  const matriz   = d.matriz   || [[0, 0], [0, 0]];
+
+  // ── Título ──
+  document.getElementById('chart-title').textContent =
+    `${ticker} — Precio de cierre + señales SVC (últimos ${fechas.length} días)`;
+
+  // ── Semáforo (usa la última señal real del modelo) ──
+  const badge = document.getElementById('signal-badge');
+  badge.className = `signal-badge signal-${d.senal}`;
+  document.getElementById('signal-text').textContent = d.senal;
+
+  // ── Métricas (vienen en proporción 0-1 → mostrar como %) ──
+  document.getElementById('m-accuracy').textContent = `${(metricas.accuracy * 100).toFixed(1)}%`;
+  document.getElementById('m-f1').textContent       = metricas.f1.toFixed(2);
+  document.getElementById('m-prec').textContent     = metricas.precision.toFixed(2);
+  document.getElementById('m-recall').textContent   = metricas.recall.toFixed(2);
+
+  // ── Gráfico con triángulos BUY/SELL (sin HOLD: el modelo real es binario) ──
+  _renderGraficoReal(fechas, precios, senales);
+
+  // ── Matriz de confusión 2×2 (BUY/SELL) ──
+  _renderMatrizReal(matriz);
+
+  // ── Barra de distribución BUY/SELL ──
+  const total = senales.length || 1;
+  const buy  = senales.filter(s => s === 'BUY').length;
+  const sell = senales.filter(s => s === 'SELL').length;
+  document.getElementById('dist-buy').style.width  = `${(buy  / total * 100).toFixed(1)}%`;
+  document.getElementById('dist-hold').style.width = '0%';
+  document.getElementById('dist-sell').style.width = `${(sell / total * 100).toFixed(1)}%`;
+}
+
+function _renderGraficoReal(fechas, precios, senales) {
+  const ctx = document.getElementById('priceChart').getContext('2d');
+  if (priceChart) priceChart.destroy();
+
+  const grad = ctx.createLinearGradient(0, 0, 0, 340);
+  grad.addColorStop(0, 'rgba(88,166,255,0.20)');
+  grad.addColorStop(1, 'rgba(88,166,255,0.00)');
+
+  priceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: fechas,
+      datasets: [{
+        label: 'Precio cierre',
+        data: precios,
+        borderColor: 'rgba(88,166,255,0.9)',
+        borderWidth: 1.8,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        fill: true,
+        backgroundColor: grad,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e2530',
+          borderColor: 'rgba(88,166,255,0.3)',
+          borderWidth: 1,
+          titleColor: '#7d8590',
+          bodyColor: '#e6edf3',
+          callbacks: {
+            label(ctx) {
+              const s = senales[ctx.dataIndex];
+              const lbl = s === 'BUY' ? '▲ BUY' : '▼ SELL';
+              return ` $${ctx.parsed.y.toFixed(2)}   ${lbl}`;
+            }
+          }
+        },
+        triangles: {}
+      },
+      scales: {
+        x: {
+          ticks: { color: '#7d8590', font: { size: 10 }, maxTicksLimit: 12 },
+          grid: { color: 'rgba(255,255,255,0.04)' }
+        },
+        y: {
+          ticks: {
+            color: '#7d8590',
+            font: { size: 10, family: 'JetBrains Mono, monospace' },
+            callback: v => `$${v}`
+          },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        }
+      }
+    }
+  });
+
+  // El plugin trianglePlugin lee chart._senales y compara con strings ahora
+  priceChart._senales = senales;
+}
+
+/**
+ * Matriz de confusión 2×2 (BUY/SELL), reemplaza la versión 3×3
+ * original ya que el modelo SVC real entrenado es binario.
+ */
+function _renderMatrizReal(matriz) {
+  const clases = ['BUY', 'SELL'];
+  const tabla  = document.getElementById('cm-table');
+  const maxVal = Math.max(...matriz.flat());
+
+  let html = '<tr><th></th>';
+  clases.forEach(c => html += `<th style="color:${clasColor(c)}">Pred ${c}</th>`);
+  html += '</tr>';
+
+  matriz.forEach((fila, ri) => {
+    html += `<tr><th style="color:${clasColor(clases[ri])};text-align:right;padding-right:8px">Real ${clases[ri]}</th>`;
+    fila.forEach((val, ci) => {
+      const intensidad = maxVal > 0 ? val / maxVal : 0;
+      const esAcierto  = ri === ci;
+      const bg  = esAcierto
+        ? `rgba(63,185,80,${0.10 + intensidad * 0.60})`
+        : `rgba(248,81,73,${0.04 + intensidad * 0.40})`;
+      const col = intensidad > 0.5 ? '#e6edf3' : '#7d8590';
+      html += `<td class="cm-cell" style="background:${bg};color:${col}" data-label="${clases[ri]}→${clases[ci]}: ${val}">${val}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  tabla.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════
+//  INIT — carga datos reales de FSM al abrir la página
+//  (se espera a DOMContentLoaded porque apiFetch() viene
+//  de investai-api-integration.js, que se carga después
+//  de este bloque <script> en el documento)
+// ═══════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  cargarSVCReal('FSM');
+});
 
 /* __INVESTAI_NAV_JS__ */
     (function(){
