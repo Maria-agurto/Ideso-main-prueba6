@@ -700,7 +700,7 @@
           <div class="form-grid">
             <div class="form-group">
               <label class="form-label" for="inputTicker">Ticker / Símbolo</label>
-              <input id="inputTicker" class="form-control" type="text" placeholder="ej. AAPL" maxlength="10" oninput="this.value = this.value.toUpperCase(); updateSummary();" />
+              <input id="inputTicker" class="form-control" type="text" placeholder="ej. FSM" maxlength="10" oninput="this.value = this.value.toUpperCase(); updateSummary();" />
             </div>
 
             <div class="form-group">
@@ -857,7 +857,8 @@
     let currentDirection = 'BUY';
     const portfolioCash = 50000.00;
     // Precios de mercado simulados
-    const mockPrices = { 'AAPL': 185.20, 'MSFT': 420.15, 'TSLA': 175.50, 'NVDA': 900.25, 'GOOGL': 172.10 };
+    // Precios de mercado simulados — tickers del sector minero del proyecto
+    const mockPrices = { 'FSM': 6.45, 'BVN': 23.95, 'BHP': 58.30, 'ABX.TO': 21.40, 'VOLCABC1.LM': 0.85 };
 
     function setDirection(dir) {
       currentDirection = dir;
